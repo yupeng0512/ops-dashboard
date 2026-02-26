@@ -1,0 +1,32 @@
+services:
+  ops-dashboard:
+    build: .
+    container_name: ops-dashboard
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - TZ=Asia/Shanghai
+      - FEISHU_WEBHOOK_URL=${FEISHU_WEBHOOK_URL:-}
+      - WEWORK_WEBHOOK_URL=${WEWORK_WEBHOOK_URL:-}
+      - NOTIFY_COOLDOWN_HOURS=${NOTIFY_COOLDOWN_HOURS:-24}
+    networks:
+      - sentinel-network
+      - digital-twin
+      - default
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9090/api/stats')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  sentinel-network:
+    external: true
+    name: github-sentinel_sentinel-network
+  digital-twin:
+    external: true
+    name: digital-twin_digital-twin

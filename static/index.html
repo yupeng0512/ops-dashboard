@@ -295,6 +295,59 @@
 
   .event-status-resolved { opacity: 0.45; }
 
+  /* GEP Repair Stats */
+  .repair-bar {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-bottom: 28px;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+  .repair-bar-title {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .repair-bar-title .dna { font-size: 14px; }
+  .repair-metric {
+    display: flex;
+    align-items: baseline;
+    gap: 5px;
+  }
+  .repair-metric-value {
+    font-family: var(--font-mono);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+  .repair-metric-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+  .repair-metric-value.rate-good { color: var(--success); }
+  .repair-metric-value.rate-mid { color: var(--warning); }
+  .repair-metric-value.rate-bad { color: var(--critical); }
+  .repair-gene-tag {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: var(--success-bg);
+    color: var(--success);
+    border: 1px solid rgba(16, 185, 129, 0.25);
+  }
+
   .empty-state {
     text-align: center;
     padding: 48px 20px;
@@ -312,11 +365,210 @@
     font-size: 12px;
   }
 
+  /* Settings Panel */
+  .settings-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(4px);
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .settings-panel {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    width: min(680px, 95vw);
+    max-height: 85vh;
+    overflow-y: auto;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.5);
+  }
+  .settings-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 24px 16px;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--bg-secondary);
+    z-index: 1;
+    border-radius: 12px 12px 0 0;
+  }
+  .settings-header h2 {
+    font-family: var(--font-mono);
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .settings-close {
+    width: 32px; height: 32px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    transition: all 0.15s;
+  }
+  .settings-close:hover { border-color: var(--critical); color: var(--critical); }
+  .settings-body { padding: 20px 24px 24px; }
+  .settings-group {
+    margin-bottom: 24px;
+  }
+  .settings-group-title {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--accent);
+    margin-bottom: 12px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .config-item {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 8px;
+    transition: border-color 0.2s;
+  }
+  .config-item:hover { border-color: rgba(99,102,241,0.3); }
+  .config-item-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    gap: 8px;
+  }
+  .config-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .config-source {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    flex-shrink: 0;
+  }
+  .config-source.src-db { background: rgba(16,185,129,0.12); color: var(--success); border: 1px solid rgba(16,185,129,0.25); }
+  .config-source.src-env { background: rgba(59,130,246,0.12); color: var(--info); border: 1px solid rgba(59,130,246,0.25); }
+  .config-source.src-default { background: rgba(85,102,119,0.15); color: var(--text-muted); border: 1px solid rgba(85,102,119,0.25); }
+  .config-source.src-none { background: rgba(239,68,68,0.08); color: var(--text-muted); border: 1px solid rgba(239,68,68,0.15); }
+  .config-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+    line-height: 1.4;
+  }
+  .config-input-row {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .config-input {
+    flex: 1;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 7px 10px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .config-input:focus { border-color: var(--accent); }
+  .config-input::placeholder { color: var(--text-muted); }
+  .config-btn {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    padding: 7px 12px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .config-btn:hover { border-color: var(--accent); color: var(--text-primary); }
+  .config-btn.save-btn { border-color: var(--success); color: var(--success); }
+  .config-btn.save-btn:hover { background: rgba(16,185,129,0.1); }
+  .config-btn.reset-btn:hover { border-color: var(--warning); color: var(--warning); }
+  .config-btn.test-btn { border-color: var(--accent); color: var(--accent); }
+  .config-btn.test-btn:hover { background: rgba(99,102,241,0.1); }
+  .config-key {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .settings-footer {
+    padding: 16px 24px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .toast {
+    position: fixed;
+    bottom: 24px; right: 24px;
+    padding: 10px 18px;
+    border-radius: 8px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    z-index: 200;
+    animation: toastIn 0.3s ease;
+    max-width: 360px;
+  }
+  .toast-success { background: var(--success); color: #fff; }
+  .toast-error { background: var(--critical); color: #fff; }
+  .toast-info { background: var(--accent); color: #fff; }
+  @keyframes toastIn {
+    from { transform: translateY(20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+
+  /* Settings Gear Button */
+  .settings-btn {
+    width: 34px; height: 34px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    transition: all 0.2s;
+  }
+  .settings-btn:hover { border-color: var(--accent); color: var(--accent); transform: rotate(30deg); }
+
   @media (max-width: 640px) {
     .stats-row { grid-template-columns: repeat(2, 1fr); }
     .projects-grid { grid-template-columns: 1fr; }
     .event-top { flex-direction: column; }
     .event-actions { align-self: flex-end; }
+    .settings-panel { width: 100vw; max-height: 100vh; border-radius: 0; }
   }
 </style>
 </head>
@@ -325,7 +577,10 @@
 
   <div class="header">
     <h1><span>&gt;</span> ops-dashboard</h1>
-    <div class="header-meta" x-text="lastRefresh ? 'updated ' + timeAgo(lastRefresh) : 'loading...'"></div>
+    <div style="display:flex;align-items:center;gap:12px">
+      <div class="header-meta" x-text="lastRefresh ? 'updated ' + timeAgo(lastRefresh) : 'loading...'"></div>
+      <button class="settings-btn" @click="openSettings()" title="设置">&#9881;</button>
+    </div>
   </div>
 
   <!-- Stats -->
@@ -345,6 +600,31 @@
     <div class="stat-card stat-total">
       <div class="stat-label">Total Open</div>
       <div class="stat-value" x-text="stats.total_open || 0"></div>
+    </div>
+  </div>
+
+  <!-- GEP Repair Stats -->
+  <div class="repair-bar" x-show="stats.repair && stats.repair.total_attempts > 0">
+    <div class="repair-bar-title">
+      <span class="dna">&#129516;</span> GEP Auto-Repair
+    </div>
+    <div class="repair-metric">
+      <span class="repair-metric-value" x-text="stats.repair?.total_attempts || 0"></span>
+      <span class="repair-metric-label">attempts</span>
+    </div>
+    <div class="repair-metric">
+      <span class="repair-metric-value"
+            :class="(stats.repair?.success_rate || 0) >= 0.7 ? 'rate-good' : (stats.repair?.success_rate || 0) >= 0.4 ? 'rate-mid' : 'rate-bad'"
+            x-text="((stats.repair?.success_rate || 0) * 100).toFixed(0) + '%'"></span>
+      <span class="repair-metric-label">success rate</span>
+    </div>
+    <div class="repair-metric">
+      <span class="repair-metric-value" x-text="stats.repair?.total_success || 0"></span>
+      <span class="repair-metric-label">fixed</span>
+    </div>
+    <div class="repair-metric">
+      <span class="repair-metric-value" x-text="Object.keys(stats.repair?.genes || {}).length"></span>
+      <span class="repair-metric-label">genes active</span>
     </div>
   </div>
 
@@ -422,6 +702,80 @@
 
   <div class="loading" x-show="loading">loading...</div>
 
+  <!-- Settings Panel -->
+  <div class="settings-overlay" x-show="showSettings" x-cloak @click.self="showSettings = false"
+       x-transition:enter="transition ease-out duration-200"
+       x-transition:enter-start="opacity-0"
+       x-transition:enter-end="opacity-100"
+       x-transition:leave="transition ease-in duration-150"
+       x-transition:leave-start="opacity-100"
+       x-transition:leave-end="opacity-0"
+       style="display:none">
+    <div class="settings-panel" @click.stop>
+      <div class="settings-header">
+        <h2>&#9881; 运行配置</h2>
+        <button class="settings-close" @click="showSettings = false">&times;</button>
+      </div>
+      <div class="settings-body">
+        <template x-for="group in configGroups" :key="group.key">
+          <div class="settings-group">
+            <div class="settings-group-title" x-text="group.label"></div>
+            <template x-for="item in configsByGroup(group.key)" :key="item.key">
+              <div class="config-item">
+                <div class="config-item-header">
+                  <div>
+                    <div class="config-label" x-text="item.label"></div>
+                    <div class="config-key" x-text="item.key"></div>
+                  </div>
+                  <span class="config-source"
+                        :class="'src-' + item.source"
+                        x-text="item.source === 'db' ? 'DB' : item.source === 'env' ? 'ENV' : item.source === 'default' ? 'DEFAULT' : 'UNSET'">
+                  </span>
+                </div>
+                <div class="config-desc" x-text="item.description"></div>
+                <div class="config-input-row">
+                  <input class="config-input"
+                         :type="item.is_secret ? 'password' : 'text'"
+                         :value="configEdits[item.key] !== undefined ? configEdits[item.key] : item.value"
+                         @input="configEdits[item.key] = $event.target.value"
+                         :placeholder="item.is_secret ? '••••••••' : '未设置'"
+                  />
+                  <button class="config-btn save-btn"
+                          @click="saveConfig(item.key)"
+                          :disabled="configEdits[item.key] === undefined">
+                    保存
+                  </button>
+                  <button class="config-btn reset-btn"
+                          x-show="item.source === 'db'"
+                          @click="resetConfig(item.key)">
+                    重置
+                  </button>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+
+        <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">
+          <button class="config-btn test-btn" @click="testNotify()" :disabled="testingNotify">
+            <span x-text="testingNotify ? '发送中...' : '🧪 测试推送'"></span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div x-show="toast.show" x-cloak
+       class="toast"
+       :class="'toast-' + toast.type"
+       x-text="toast.message"
+       x-transition:leave="transition ease-in duration-300"
+       x-transition:leave-start="opacity-100"
+       x-transition:leave-end="opacity-0"
+       style="display:none">
+  </div>
+
 </div>
 
 <script>
@@ -436,6 +790,18 @@ function dashboard() {
     filterLevel: null,
     filterStatus: 'open',
     refreshTimer: null,
+
+    showSettings: false,
+    configs: [],
+    configEdits: {},
+    testingNotify: false,
+    toast: { show: false, message: '', type: 'success' },
+
+    configGroups: [
+      { key: 'notification', label: '📢 通知推送' },
+      { key: 'escalation', label: '⏰ 升级告警' },
+      { key: 'probe', label: '🔍 探测设置' },
+    ],
 
     async init() {
       await this.refresh();
@@ -482,6 +848,90 @@ function dashboard() {
         });
         await this.refresh();
       } catch (e) { console.error('update error', e); }
+    },
+
+    async openSettings() {
+      this.showSettings = true;
+      this.configEdits = {};
+      await this.fetchConfigs();
+    },
+
+    async fetchConfigs() {
+      try {
+        const r = await fetch('/api/config');
+        this.configs = await r.json();
+      } catch (e) {
+        console.error('config fetch error', e);
+        this.showToast('加载配置失败', 'error');
+      }
+    },
+
+    configsByGroup(groupKey) {
+      return this.configs.filter(c => c.group === groupKey);
+    },
+
+    async saveConfig(key) {
+      const value = this.configEdits[key];
+      if (value === undefined) return;
+      try {
+        const r = await fetch(`/api/config/${key}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ value }),
+        });
+        if (r.ok) {
+          this.showToast(`${key} 已保存，立即生效`, 'success');
+          delete this.configEdits[key];
+          await this.fetchConfigs();
+        } else {
+          const err = await r.json();
+          this.showToast(err.detail || '保存失败', 'error');
+        }
+      } catch (e) {
+        this.showToast('保存失败: ' + e.message, 'error');
+      }
+    },
+
+    async resetConfig(key) {
+      try {
+        const r = await fetch(`/api/config/${key}`, { method: 'DELETE' });
+        if (r.ok) {
+          this.showToast(`${key} 已重置为 ENV 兜底值`, 'info');
+          delete this.configEdits[key];
+          await this.fetchConfigs();
+        }
+      } catch (e) {
+        this.showToast('重置失败: ' + e.message, 'error');
+      }
+    },
+
+    async testNotify() {
+      this.testingNotify = true;
+      try {
+        const r = await fetch('/api/config/test-notify', { method: 'POST' });
+        const result = await r.json();
+        const feishu = result.feishu;
+        const wework = result.wework;
+
+        if (feishu === true || wework === true) {
+          const channels = [];
+          if (feishu === true) channels.push('飞书');
+          if (wework === true) channels.push('企微');
+          this.showToast(`测试推送成功 → ${channels.join(', ')}`, 'success');
+        } else if (feishu === null && wework === null) {
+          this.showToast('未配置任何 Webhook 地址', 'error');
+        } else {
+          this.showToast('推送失败，请检查 Webhook 地址', 'error');
+        }
+      } catch (e) {
+        this.showToast('测试推送失败: ' + e.message, 'error');
+      }
+      this.testingNotify = false;
+    },
+
+    showToast(message, type = 'success') {
+      this.toast = { show: true, message, type };
+      setTimeout(() => { this.toast.show = false; }, 3000);
     },
 
     timeAgo(iso) {

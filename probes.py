@@ -32,7 +32,7 @@ PROJECTS_CONFIG = [
     {
         "name": "truthsocial-trump-monitor",
         "containers": ["truthsocial-trump-monitor"],
-        "health_url": "http://truthsocial-trump-monitor:8000/api/health",
+        "health_url": "http://truthsocial-trump-monitor:6001/api/health",
     },
     {
         "name": "digital-twin",
@@ -46,8 +46,8 @@ PROJECTS_CONFIG = [
         "health_url": None,
     },
     {
-        "name": "mcp-gateway",
-        "containers": ["mcp-gateway", "pinme-mcp"],
+        "name": "mcp-services",
+        "containers": ["pinme-mcp", "github-sentinel-mcp"],
         "health_url": None,
     },
     {
@@ -55,32 +55,55 @@ PROJECTS_CONFIG = [
         "containers": ["rsshub"],
         "health_url": None,
     },
+    {
+        "name": "infrastructure",
+        "containers": ["traefik", "ops-dashboard"],
+        "health_url": None,
+    },
+    {
+        "name": "drawio",
+        "containers": ["drawio-local"],
+        "health_url": None,
+    },
+    {
+        "name": "rabbitmq",
+        "containers": ["rabbitmq-test"],
+        "health_url": None,
+    },
 ]
 
 
-def run_probes() -> list[dict]:
-    """执行所有探测，返回需要上报的事件列表"""
+def run_probes() -> tuple[list[dict], list[str]]:
+    """执行所有探测，返回 (异常事件列表, 已恢复的 dedup_key 列表)"""
     events = []
+    recovered_keys = []
 
     for project in PROJECTS_CONFIG:
-        events.extend(_check_containers(project))
+        container_events, container_recovered = _check_containers(project)
+        events.extend(container_events)
+        recovered_keys.extend(container_recovered)
 
         if project.get("health_url"):
             evt = _check_health(project)
             if evt:
                 events.append(evt)
+            else:
+                recovered_keys.append(f"{project['name']}:health_check_failed")
 
-    return events
+    return events, recovered_keys
 
 
-def _check_containers(project: dict) -> list[dict]:
-    """通过 Docker API 检查容器状态"""
+def _check_containers(project: dict) -> tuple[list[dict], list[str]]:
+    """通过 Docker API 检查容器状态，返回 (异常事件, 已恢复 dedup_key)"""
     events = []
+    recovered_keys = []
     try:
         import docker
         client = docker.from_env()
 
         for container_name in project["containers"]:
+            stopped_key = f"{project['name']}:container_stopped:{container_name}"
+            unhealthy_key = f"{project['name']}:container_unhealthy:{container_name}"
             try:
                 container = client.containers.get(container_name)
                 status = container.status
@@ -97,7 +120,7 @@ def _check_containers(project: dict) -> list[dict]:
                         "title": f"容器 {container_name} 已停止",
                         "detail": f"状态: {status}",
                         "action_hint": f"docker start {container_name}",
-                        "dedup_key": f"{project['name']}:container_stopped:{container_name}",
+                        "dedup_key": stopped_key,
                     })
                 elif health == "unhealthy":
                     log_tail = ""
@@ -112,8 +135,12 @@ def _check_containers(project: dict) -> list[dict]:
                         "title": f"容器 {container_name} 健康检查失败",
                         "detail": log_tail,
                         "action_hint": f"docker logs {container_name} --tail 50",
-                        "dedup_key": f"{project['name']}:container_unhealthy:{container_name}",
+                        "dedup_key": unhealthy_key,
                     })
+                    recovered_keys.append(stopped_key)
+                else:
+                    recovered_keys.append(stopped_key)
+                    recovered_keys.append(unhealthy_key)
             except docker.errors.NotFound:
                 events.append({
                     "project": project["name"],
@@ -122,7 +149,7 @@ def _check_containers(project: dict) -> list[dict]:
                     "title": f"容器 {container_name} 不存在",
                     "detail": "容器未找到，可能未启动或已被删除",
                     "action_hint": f"cd /data/workspace/{project['name']} && docker compose up -d",
-                    "dedup_key": f"{project['name']}:container_stopped:{container_name}",
+                    "dedup_key": stopped_key,
                 })
             except Exception as e:
                 logger.debug(f"Container check error for {container_name}: {e}")
@@ -132,7 +159,7 @@ def _check_containers(project: dict) -> list[dict]:
     except Exception as e:
         logger.warning(f"Docker API error: {e}")
 
-    return events
+    return events, recovered_keys
 
 
 def _check_health(project: dict) -> dict | None:

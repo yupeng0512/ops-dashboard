@@ -1,0 +1,110 @@
+{
+  "schema_version": "1.0.0",
+  "description": "Ops Dashboard repair genes - extracted from project KNOWN_ISSUES.md",
+  "genes": [
+    {
+      "type": "Gene",
+      "id": "gene_container_restart",
+      "category": "repair",
+      "signals_match": ["container_stopped", "container_not_found"],
+      "preconditions": ["docker_available"],
+      "strategy": [
+        "Identify the stopped container from the event detail",
+        "Attempt docker start for the container",
+        "If container not found, run docker compose up -d in the project directory",
+        "Verify container is running after restart"
+      ],
+      "constraints": {
+        "max_retries": 2,
+        "cooldown_seconds": 300,
+        "allowed_projects": ["*"]
+      },
+      "validation": ["docker_container_running"],
+      "repair_action": {
+        "type": "docker_restart",
+        "params": {
+          "fallback_compose": true
+        }
+      },
+      "summary": "Restart stopped Docker containers, falling back to docker compose up if needed"
+    },
+    {
+      "type": "Gene",
+      "id": "gene_container_unhealthy_restart",
+      "category": "repair",
+      "signals_match": ["container_unhealthy"],
+      "preconditions": ["docker_available"],
+      "strategy": [
+        "Identify the unhealthy container",
+        "Restart the container to attempt recovery",
+        "Wait for health check to pass"
+      ],
+      "constraints": {
+        "max_retries": 1,
+        "cooldown_seconds": 600,
+        "allowed_projects": ["*"]
+      },
+      "validation": ["docker_container_healthy"],
+      "repair_action": {
+        "type": "docker_restart",
+        "params": {}
+      },
+      "summary": "Restart unhealthy containers to recover from transient failures"
+    },
+    {
+      "type": "Gene",
+      "id": "gene_health_check_restart",
+      "category": "repair",
+      "signals_match": ["connection_failed", "health_check_failed"],
+      "preconditions": ["docker_available"],
+      "strategy": [
+        "Identify the project with failed health check",
+        "Restart the primary container for the project",
+        "Wait 30 seconds for service to become available",
+        "Re-check the health endpoint"
+      ],
+      "constraints": {
+        "max_retries": 1,
+        "cooldown_seconds": 600,
+        "allowed_projects": ["*"]
+      },
+      "validation": ["health_endpoint_ok"],
+      "repair_action": {
+        "type": "docker_restart",
+        "params": {
+          "wait_after_restart": 30
+        }
+      },
+      "summary": "Restart containers when health endpoints are unreachable"
+    },
+    {
+      "type": "Gene",
+      "id": "gene_disk_space_cleanup",
+      "category": "repair",
+      "signals_match": ["disk_space_low", "disk_full"],
+      "preconditions": [],
+      "strategy": [
+        "Check current disk usage",
+        "Run docker system prune to remove unused images and containers",
+        "Clean old log files (>7 days)",
+        "Verify disk usage has decreased"
+      ],
+      "constraints": {
+        "max_retries": 1,
+        "cooldown_seconds": 3600,
+        "allowed_projects": ["*"]
+      },
+      "validation": ["disk_usage_below_90"],
+      "repair_action": {
+        "type": "shell_command",
+        "params": {
+          "commands": [
+            "docker system prune -f --volumes",
+            "find /data/workspace/*/logs -name '*.log' -mtime +7 -delete 2>/dev/null || true"
+          ]
+        }
+      },
+      "summary": "Free disk space by pruning Docker resources and old logs"
+    }
+  ]
+}

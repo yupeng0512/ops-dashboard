@@ -5,8 +5,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py models.py notifier.py probes.py ops_reporter.py ./
+COPY main.py models.py notifier.py probes.py ops_reporter.py repair_engine.py ./
 COPY static/ ./static/
+COPY genes/ ./genes/
 
 RUN mkdir -p /app/data
 

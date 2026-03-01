@@ -3,8 +3,6 @@ services:
     build: .
     container_name: ops-dashboard
     restart: unless-stopped
-    ports:
-      - "9090:9090"
     volumes:
       - ./data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -16,7 +14,14 @@ services:
     networks:
       - sentinel-network
       - digital-twin
+      - traefik-net
+      - ops-net
       - default
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ops-dashboard.rule=Host(`ops.dev.local`)"
+      - "traefik.http.routers.ops-dashboard.entrypoints=web"
+      - "traefik.http.services.ops-dashboard.loadbalancer.server.port=9090"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9090/api/stats')"]
       interval: 30s
@@ -30,3 +35,7 @@ networks:
   digital-twin:
     external: true
     name: digital-twin_digital-twin
+  traefik-net:
+    external: true
+  ops-net:
+    external: true

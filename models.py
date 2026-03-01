@@ -1,5 +1,6 @@
-"""数据模型 + 数据库初始化"""
+"""数据模型 + 数据库初始化 + 动态配置管理"""
 
+import os
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -40,6 +41,68 @@ class EventResponse(BaseModel):
     dedup_key: str
 
 
+# ---------------------------------------------------------------------------
+# 配置项定义：key -> (label, type, default_env_key, fallback_default, description)
+# type: "str" | "int" | "bool"
+# ---------------------------------------------------------------------------
+CONFIG_SCHEMA: dict[str, dict] = {
+    "FEISHU_WEBHOOK_URL": {
+        "label": "飞书 Webhook URL",
+        "type": "str",
+        "group": "notification",
+        "description": "飞书机器人 Webhook 地址",
+    },
+    "WEWORK_WEBHOOK_URL": {
+        "label": "企微 Webhook URL",
+        "type": "str",
+        "group": "notification",
+        "description": "企业微信机器人 Webhook 地址",
+    },
+    "NOTIFY_COOLDOWN_HOURS": {
+        "label": "推送冷却时间 (小时)",
+        "type": "int",
+        "group": "notification",
+        "default": "1",
+        "description": "同一事件推送间隔，避免重复告警",
+    },
+    "EVENT_STALE_THRESHOLD_HOURS": {
+        "label": "事件超时阈值 (小时)",
+        "type": "int",
+        "group": "escalation",
+        "default": "1",
+        "description": "事件超过此时间未解决则触发升级告警",
+    },
+    "LOG_STALE_THRESHOLD_HOURS": {
+        "label": "日志滞留阈值 (小时)",
+        "type": "int",
+        "group": "escalation",
+        "default": "2",
+        "description": "项目超过此时间无更新但仍有 open 事件则告警",
+    },
+    "ESCALATION_CHECK_INTERVAL": {
+        "label": "升级检查间隔 (秒)",
+        "type": "int",
+        "group": "escalation",
+        "default": "600",
+        "description": "后台定时检查超时事件和日志滞留的间隔",
+    },
+    "PROBE_INTERVAL_SECONDS": {
+        "label": "探测间隔 (秒)",
+        "type": "int",
+        "group": "probe",
+        "default": "300",
+        "description": "容器和健康端点探测的执行间隔",
+    },
+    "DAILY_SUMMARY_HOUR": {
+        "label": "日报推送时间 (UTC 小时)",
+        "type": "int",
+        "group": "notification",
+        "default": "9",
+        "description": "每日汇总推送的 UTC 小时数 (0-23)",
+    },
+}
+
+
 def get_db() -> sqlite3.Connection:
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
@@ -70,6 +133,12 @@ def init_db() -> None:
 
         CREATE INDEX IF NOT EXISTS idx_events_status ON ops_events(status, level);
         CREATE INDEX IF NOT EXISTS idx_events_project ON ops_events(project, created_at);
+
+        CREATE TABLE IF NOT EXISTS ops_config (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
     """)
     conn.close()
 
@@ -153,6 +222,21 @@ def update_event_status(event_id: int, new_status: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
+def auto_resolve_by_dedup_key(dedup_key: str) -> int:
+    """Auto-resolve open events matching a dedup_key. Returns count resolved."""
+    conn = get_db()
+    now = datetime.utcnow().isoformat() + "Z"
+    cursor = conn.execute(
+        "UPDATE ops_events SET status='resolved', resolved_at=?, updated_at=? "
+        "WHERE dedup_key=? AND status='open'",
+        (now, now, dedup_key),
+    )
+    count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return count
+
+
 def get_stats() -> dict:
     conn = get_db()
     rows = conn.execute(
@@ -188,3 +272,105 @@ def mark_notified(event_id: int) -> None:
     conn.execute("UPDATE ops_events SET notified_at=? WHERE id=?", (now, event_id))
     conn.commit()
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# 动态配置：DB 优先 → ENV 兜底 → schema default
+# ---------------------------------------------------------------------------
+
+def get_config(key: str) -> str:
+    """读取单个配置。优先级：DB → ENV → schema default"""
+    conn = get_db()
+    row = conn.execute(
+        "SELECT value FROM ops_config WHERE key = ?", (key,)
+    ).fetchone()
+    conn.close()
+
+    if row and row["value"] != "":
+        return row["value"]
+
+    env_val = os.getenv(key, "")
+    if env_val:
+        return env_val
+
+    schema = CONFIG_SCHEMA.get(key, {})
+    return schema.get("default", "")
+
+
+def get_config_int(key: str, fallback: int = 0) -> int:
+    val = get_config(key)
+    try:
+        return int(val) if val else fallback
+    except (ValueError, TypeError):
+        return fallback
+
+
+def get_all_configs() -> list[dict]:
+    """获取所有配置项（合并 schema + DB + ENV）"""
+    conn = get_db()
+    db_rows = conn.execute("SELECT key, value, updated_at FROM ops_config").fetchall()
+    conn.close()
+
+    db_map = {r["key"]: {"value": r["value"], "updated_at": r["updated_at"]} for r in db_rows}
+
+    result = []
+    for key, schema in CONFIG_SCHEMA.items():
+        db_entry = db_map.get(key)
+        env_val = os.getenv(key, "")
+        schema_default = schema.get("default", "")
+
+        if db_entry and db_entry["value"] != "":
+            effective = db_entry["value"]
+            source = "db"
+        elif env_val:
+            effective = env_val
+            source = "env"
+        elif schema_default:
+            effective = schema_default
+            source = "default"
+        else:
+            effective = ""
+            source = "none"
+
+        is_secret = "webhook" in key.lower() or "secret" in key.lower() or "token" in key.lower()
+
+        result.append({
+            "key": key,
+            "label": schema["label"],
+            "type": schema["type"],
+            "group": schema["group"],
+            "description": schema["description"],
+            "value": effective,
+            "source": source,
+            "is_secret": is_secret,
+            "updated_at": db_entry["updated_at"] if db_entry else None,
+        })
+
+    return result
+
+
+def set_config(key: str, value: str) -> dict:
+    """写入配置到数据库"""
+    if key not in CONFIG_SCHEMA:
+        raise ValueError(f"Unknown config key: {key}")
+
+    conn = get_db()
+    now = datetime.utcnow().isoformat() + "Z"
+    conn.execute(
+        """INSERT INTO ops_config (key, value, updated_at)
+           VALUES (?, ?, ?)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at""",
+        (key, value, now),
+    )
+    conn.commit()
+    conn.close()
+    return {"key": key, "value": value, "source": "db", "updated_at": now}
+
+
+def delete_config(key: str) -> bool:
+    """删除数据库中的配置，恢复使用 ENV 兜底"""
+    conn = get_db()
+    conn.execute("DELETE FROM ops_config WHERE key = ?", (key,))
+    conn.commit()
+    conn.close()
+    return True

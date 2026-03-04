@@ -159,6 +159,23 @@
   .badge-info { background: var(--info-bg); color: var(--info); border: 1px solid var(--info-border); }
 
   .containers-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .project-mttr {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-secondary);
+  }
+  .mttr-label { color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.8px; }
+  .mttr-value { color: var(--text-primary); font-weight: 600; }
+  .mttr-trend.improving { color: var(--success); }
+  .mttr-trend.worsening { color: var(--critical); }
+  .mttr-trend.stable { color: var(--warning); }
   .container-dot {
     width: 8px; height: 8px;
     border-radius: 50%;
@@ -651,6 +668,16 @@
             </div>
           </template>
         </div>
+        <div class="project-mttr" x-show="p.mttr && p.mttr.sample_count > 0">
+          <span class="mttr-label">MTTR</span>
+          <span class="mttr-value"
+                x-text="formatDuration(p.mttr.last_mttr_seconds) + ' / avg ' + formatDuration(p.mttr.avg_mttr_seconds)">
+          </span>
+          <span class="mttr-trend"
+                :class="p.mttr.trend"
+                x-text="trendLabel(p.mttr)">
+          </span>
+        </div>
       </div>
     </template>
   </div>
@@ -941,6 +968,23 @@ function dashboard() {
       if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
       if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
       return Math.floor(diff / 86400) + 'd ago';
+    },
+
+    formatDuration(seconds) {
+      const s = Number(seconds || 0);
+      if (!Number.isFinite(s) || s < 0) return '-';
+      if (s < 60) return Math.round(s) + 's';
+      if (s < 3600) return Math.round(s / 60) + 'm';
+      return (s / 3600).toFixed(1) + 'h';
+    },
+
+    trendLabel(mttr) {
+      if (!mttr) return '';
+      const delta = Number(mttr.trend_delta_pct || 0) * 100;
+      if (!Number.isFinite(delta)) return '→ stable';
+      if (mttr.trend === 'improving') return `↘ improving ${Math.abs(delta).toFixed(0)}%`;
+      if (mttr.trend === 'worsening') return `↗ worsening ${Math.abs(delta).toFixed(0)}%`;
+      return '→ stable';
     },
   };
 }

@@ -27,6 +27,14 @@ logger = logging.getLogger("ops-dashboard.repair")
 GENES_DIR = Path("genes")
 CAPSULES_PATH = Path("data/repair_capsules.jsonl")
 WORKSPACE_ROOT = Path(os.environ.get("WORKSPACE_ROOT", "/data/workspace"))
+PROJECT_PRIMARY_CONTAINERS = {
+    "trading-system": "trading-api",
+    "infohunter": "infohunter",
+    "github-sentinel": "github-sentinel-backend",
+    "truthsocial-trump-monitor": "truthsocial-trump-monitor",
+    "claws": "claws",
+    "ops-dashboard": "ops-dashboard",
+}
 
 COOLDOWN_TRACKER: dict[str, float] = {}
 
@@ -290,7 +298,7 @@ def execute_repair(gene: dict, event: dict) -> dict:
 
     try:
         if action_type == "docker_restart":
-            result = _execute_docker_restart(project, title, params)
+            result = _execute_docker_restart(event, params)
         elif action_type == "shell_command":
             result = _execute_shell_commands(params.get("commands", []))
         else:
@@ -302,9 +310,31 @@ def execute_repair(gene: dict, event: dict) -> dict:
     return result
 
 
-def _execute_docker_restart(project: str, title: str, params: dict) -> dict:
+def _resolve_container_name(event: dict) -> Optional[str]:
+    """Resolve container name from title/action_hint/project fallbacks."""
+    title = event.get("title", "")
+    action_hint = event.get("action_hint", "")
+    project = event.get("project", "")
+
+    name = _extract_container_name(title)
+    if name:
+        return name
+
+    # Parse hints like: docker logs xxx --tail 50
+    marker = "docker logs "
+    if marker in action_hint:
+        suffix = action_hint.split(marker, 1)[1].strip()
+        guessed = suffix.split(" ")[0].strip()
+        if guessed:
+            return guessed
+
+    return PROJECT_PRIMARY_CONTAINERS.get(project)
+
+
+def _execute_docker_restart(event: dict, params: dict) -> dict:
     """Restart a Docker container, with optional compose fallback."""
-    container_name = _extract_container_name(title)
+    project = event.get("project", "")
+    container_name = _resolve_container_name(event)
     if not container_name:
         return {"status": "failed", "output": "Could not identify container name"}
 

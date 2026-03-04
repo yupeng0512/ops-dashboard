@@ -1,6 +1,7 @@
 """数据模型 + 数据库初始化 + 动态配置管理"""
 
 import os
+import re
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -92,6 +93,27 @@ CONFIG_SCHEMA: dict[str, dict] = {
         "group": "probe",
         "default": "300",
         "description": "容器和健康端点探测的执行间隔",
+    },
+    "MUTED_PROJECTS": {
+        "label": "静默项目列表",
+        "type": "str",
+        "group": "probe",
+        "default": "digital-twin",
+        "description": "逗号分隔。命中的项目事件将被静默（不入 open 队列）",
+    },
+    "TRANSIENT_FAILURE_THRESHOLD": {
+        "label": "瞬时故障告警阈值",
+        "type": "int",
+        "group": "probe",
+        "default": "3",
+        "description": "同一 dedup_key 连续失败达到阈值才生成告警",
+    },
+    "TRANSIENT_FAILURE_WINDOW_MINUTES": {
+        "label": "瞬时故障统计窗口 (分钟)",
+        "type": "int",
+        "group": "probe",
+        "default": "30",
+        "description": "超过窗口后重置瞬时故障计数",
     },
     "DAILY_SUMMARY_HOUR": {
         "label": "日报推送时间 (UTC 小时)",
@@ -264,6 +286,116 @@ def get_project_summary() -> list[dict]:
     """).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+def _parse_iso_dt(raw: str) -> datetime:
+    return datetime.fromisoformat(raw.rstrip("Z"))
+
+
+def _normalize_signal_key(row: dict) -> str:
+    dedup_key = row.get("dedup_key", "") or ""
+    if dedup_key:
+        parts = dedup_key.split(":")
+        parts[-1] = re.sub(r"_(degraded|recovered)$", "", parts[-1])
+        return ":".join(parts)
+
+    title = row.get("title", "") or ""
+    title = title.replace(" 连续失败", "").replace(" 已恢复", "")
+    return f"{row.get('project', '')}:{title}"
+
+
+def _percentile(values: list[float], p: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    idx = int((len(ordered) - 1) * p)
+    return ordered[idx]
+
+
+def _mttr_trend(mttr_series: list[float]) -> tuple[str, float]:
+    if len(mttr_series) < 4:
+        return "stable", 0.0
+
+    recent = mttr_series[-3:]
+    if len(mttr_series) >= 6:
+        prev = mttr_series[-6:-3]
+    else:
+        prev = mttr_series[:-3]
+    if not prev:
+        return "stable", 0.0
+
+    recent_avg = sum(recent) / len(recent)
+    prev_avg = sum(prev) / len(prev)
+    if prev_avg <= 0:
+        return "stable", 0.0
+
+    delta_pct = (recent_avg - prev_avg) / prev_avg
+    if delta_pct <= -0.15:
+        return "improving", round(delta_pct, 3)
+    if delta_pct >= 0.15:
+        return "worsening", round(delta_pct, 3)
+    return "stable", round(delta_pct, 3)
+
+
+def get_mttr_map(projects: Optional[set[str]] = None) -> dict[str, dict]:
+    """Compute project-level MTTR from *_degraded -> *_recovered event pairs."""
+    conn = get_db()
+    if projects:
+        placeholders = ",".join("?" for _ in projects)
+        query = (
+            "SELECT project, category, dedup_key, title, created_at "
+            "FROM ops_events "
+            "WHERE (category LIKE '%_degraded' OR category LIKE '%_recovered') "
+            f"AND project IN ({placeholders}) "
+            "ORDER BY created_at ASC"
+        )
+        rows = conn.execute(query, list(projects)).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT project, category, dedup_key, title, created_at "
+            "FROM ops_events "
+            "WHERE category LIKE '%_degraded' OR category LIKE '%_recovered' "
+            "ORDER BY created_at ASC"
+        ).fetchall()
+    conn.close()
+
+    pending: dict[tuple[str, str], datetime] = {}
+    durations_by_project: dict[str, list[float]] = {}
+
+    for row in rows:
+        event = dict(row)
+        project = event.get("project", "")
+        signal_key = _normalize_signal_key(event)
+        cat = event.get("category", "")
+        ts = _parse_iso_dt(event.get("created_at", ""))
+        key = (project, signal_key)
+
+        if cat.endswith("_degraded"):
+            pending[key] = ts
+            continue
+        if cat.endswith("_recovered"):
+            started = pending.pop(key, None)
+            if not started:
+                continue
+            duration = (ts - started).total_seconds()
+            if duration < 0:
+                continue
+            durations_by_project.setdefault(project, []).append(duration)
+
+    result: dict[str, dict] = {}
+    for project, series in durations_by_project.items():
+        avg = sum(series) / len(series)
+        trend, delta_pct = _mttr_trend(series)
+        result[project] = {
+            "sample_count": len(series),
+            "last_mttr_seconds": round(series[-1], 2),
+            "avg_mttr_seconds": round(avg, 2),
+            "p95_mttr_seconds": round(_percentile(series, 0.95), 2),
+            "trend": trend,
+            "trend_delta_pct": delta_pct,
+        }
+
+    return result
 
 
 def mark_notified(event_id: int) -> None:

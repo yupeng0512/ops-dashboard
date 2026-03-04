@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query
@@ -17,7 +17,7 @@ from models import (
     EventCreate, EventUpdate,
     init_db, upsert_event, get_events, update_event_status,
     auto_resolve_by_dedup_key,
-    get_stats, get_project_summary,
+    get_stats, get_project_summary, get_mttr_map,
     get_all_configs, get_config, get_config_int, set_config, delete_config,
 )
 from notifier import (
@@ -32,9 +32,104 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
 )
 logger = logging.getLogger("ops-dashboard")
+_transient_failure_tracker: dict[str, dict[str, object]] = {}
 
 class ConfigUpdate(PydanticBaseModel):
     value: str
+
+
+def _parse_csv_config(key: str) -> set[str]:
+    raw = get_config(key)
+    return {item.strip() for item in raw.split(",") if item.strip()}
+
+
+def _is_muted_project(project: str) -> bool:
+    return project in _parse_csv_config("MUTED_PROJECTS")
+
+
+def _is_transient_category(category: str) -> bool:
+    return category in {"connection_failed", "agent_failed", "scan_failed", "container_unhealthy"}
+
+
+def _should_suppress_transient(dedup_key: str) -> tuple[bool, int]:
+    """Return (suppress, consecutive_count)."""
+    threshold = max(1, get_config_int("TRANSIENT_FAILURE_THRESHOLD", 3))
+    window_minutes = max(1, get_config_int("TRANSIENT_FAILURE_WINDOW_MINUTES", 30))
+    now = datetime.utcnow()
+
+    item = _transient_failure_tracker.get(dedup_key)
+    if not item:
+        _transient_failure_tracker[dedup_key] = {"count": 1, "first_seen": now}
+        return True, 1
+
+    first_seen = item["first_seen"]
+    if isinstance(first_seen, datetime) and now - first_seen > timedelta(minutes=window_minutes):
+        _transient_failure_tracker[dedup_key] = {"count": 1, "first_seen": now}
+        return True, 1
+
+    count = int(item["count"]) + 1
+    item["count"] = count
+    if count < threshold:
+        return True, count
+
+    # Reached threshold: emit this event and reset counter.
+    _transient_failure_tracker.pop(dedup_key, None)
+    return False, count
+
+
+async def _ingest_event(event: EventCreate) -> dict:
+    """Unified event ingestion with suppression and auto-resolve rules."""
+    dedup_key = event.dedup_key or f"{event.project}:{event.category}:{event.title[:50]}"
+
+    if _is_muted_project(event.project):
+        logger.info(f"Muted project event skipped: [{event.project}] {event.title}")
+        return {"status": "suppressed", "reason": "muted_project", "dedup_key": dedup_key}
+
+    if _is_transient_category(event.category) and event.level in ("critical", "warning"):
+        suppress, count = _should_suppress_transient(dedup_key)
+        if suppress:
+            logger.info(
+                f"Transient event suppressed ({count}/{get_config_int('TRANSIENT_FAILURE_THRESHOLD', 3)}): "
+                f"[{event.project}] {event.title}"
+            )
+            return {"status": "suppressed", "reason": "transient_threshold", "dedup_key": dedup_key}
+
+    row, is_new = upsert_event(event)
+    repair_capsule = None
+
+    # Auto-resolve non-actionable events to keep dashboard noise low.
+    if (
+        row["category"] == "service_started"
+        or "测试" in row["title"]
+        or row["category"] in {"test", "test_event"}
+        or row["category"].endswith("_recovered")
+    ):
+        row = update_event_status(row["id"], "resolved") or row
+        return {"status": "ok", "is_new": is_new, "event": row, "repair": None}
+
+    if is_new:
+        logger.info(f"New event: [{row['level']}] [{row['project']}] {row['title']}")
+        try:
+            notify_new_event(row)
+        except Exception as e:
+            logger.warning(f"Notification failed: {e}")
+
+    if row["level"] in ("critical", "warning") and row["status"] == "open":
+        try:
+            repair_capsule = await asyncio.to_thread(attempt_repair, row)
+            if repair_capsule:
+                if repair_capsule["outcome"]["status"] == "success":
+                    update_event_status(row["id"], "resolved")
+                    logger.info(f"Auto-resolved event {row['id']} via {repair_capsule['gene_id']}")
+                elif is_new:
+                    try:
+                        notify_repair_failed(row, repair_capsule)
+                    except Exception as e:
+                        logger.warning(f"Repair failure notification error: {e}")
+        except Exception as e:
+            logger.warning(f"Repair engine error: {e}")
+
+    return {"status": "ok", "is_new": is_new, "event": row, "repair": repair_capsule}
 
 
 @asynccontextmanager
@@ -66,32 +161,7 @@ async def index():
 @app.post("/api/events")
 async def create_event(event: EventCreate):
     """接收事件上报，自动尝试 GEP 修复"""
-    row, is_new = upsert_event(event)
-    repair_capsule = None
-
-    if is_new:
-        logger.info(f"New event: [{row['level']}] [{row['project']}] {row['title']}")
-        try:
-            notify_new_event(row)
-        except Exception as e:
-            logger.warning(f"Notification failed: {e}")
-
-    if row["level"] in ("critical", "warning") and row["status"] == "open":
-        try:
-            repair_capsule = await asyncio.to_thread(attempt_repair, row)
-            if repair_capsule:
-                if repair_capsule["outcome"]["status"] == "success":
-                    update_event_status(row["id"], "resolved")
-                    logger.info(f"Auto-resolved event {row['id']} via {repair_capsule['gene_id']}")
-                elif is_new:
-                    try:
-                        notify_repair_failed(row, repair_capsule)
-                    except Exception as e:
-                        logger.warning(f"Repair failure notification error: {e}")
-        except Exception as e:
-            logger.warning(f"Repair engine error: {e}")
-
-    return {"status": "ok", "is_new": is_new, "event": row, "repair": repair_capsule}
+    return await _ingest_event(event)
 
 
 @app.get("/api/events")
@@ -237,21 +307,17 @@ async def manual_probe():
     repair_count = 0
     for evt_data in events:
         event = EventCreate(**evt_data)
-        row, is_new = upsert_event(event)
-        if is_new:
-            new_count += 1
-            logger.info(f"Manual probe event: [{row['level']}] [{row['project']}] {row['title']}")
-
-        if row["level"] in ("critical", "warning") and row["status"] == "open":
-            try:
-                capsule = await asyncio.to_thread(attempt_repair, row)
-                if capsule:
-                    repair_count += 1
-                    if capsule["outcome"]["status"] == "success":
-                        update_event_status(row["id"], "resolved")
-                        resolved_count += 1
-            except Exception as e:
-                logger.warning(f"Manual probe repair error: {e}")
+        result = await _ingest_event(event)
+        if result.get("status") == "ok":
+            if result.get("is_new"):
+                new_count += 1
+                row = result.get("event", {})
+                logger.info(f"Manual probe event: [{row.get('level')}] [{row.get('project')}] {row.get('title')}")
+            capsule = result.get("repair")
+            if capsule:
+                repair_count += 1
+                if capsule.get("outcome", {}).get("status") == "success":
+                    resolved_count += 1
 
     return {
         "status": "ok",
@@ -265,13 +331,14 @@ async def manual_probe():
 
 @app.get("/api/projects")
 async def projects():
-    """项目汇总状态（事件 + 容器）"""
+    """项目汇总状态（事件 + 容器 + MTTR）"""
     summaries = get_project_summary()
     containers = get_container_statuses()
 
     container_map = {c["project"]: c["containers"] for c in containers}
 
     all_project_names = set(s["project"] for s in summaries) | set(container_map.keys())
+    mttr_map = get_mttr_map(all_project_names)
 
     result = []
     for name in sorted(all_project_names):
@@ -283,9 +350,18 @@ async def projects():
             "info_count": summary["info_count"] if summary else 0,
             "latest_event_at": summary["latest_event_at"] if summary else None,
             "containers": container_map.get(name, []),
+            "mttr": mttr_map.get(name),
         })
 
     return result
+
+
+@app.get("/api/mttr")
+async def mttr(project: Optional[str] = Query(None)):
+    """MTTR 统计视图，支持按项目过滤。"""
+    if project:
+        return get_mttr_map({project}).get(project, {})
+    return get_mttr_map()
 
 
 async def _probe_loop():
@@ -303,28 +379,7 @@ async def _probe_loop():
 
             for evt_data in events:
                 event = EventCreate(**evt_data)
-                row, is_new = upsert_event(event)
-                if is_new:
-                    logger.info(f"Probe event: [{row['level']}] [{row['project']}] {row['title']}")
-                    try:
-                        notify_new_event(row)
-                    except Exception:
-                        pass
-
-                if row["level"] in ("critical", "warning") and row["status"] == "open":
-                    try:
-                        capsule = await asyncio.to_thread(attempt_repair, row)
-                        if capsule:
-                            if capsule["outcome"]["status"] == "success":
-                                update_event_status(row["id"], "resolved")
-                                logger.info(f"Auto-repair: {capsule['gene_id']} resolved event {row['id']}")
-                            elif is_new:
-                                try:
-                                    notify_repair_failed(row, capsule)
-                                except Exception:
-                                    pass
-                    except Exception as e:
-                        logger.warning(f"Probe repair error: {e}")
+                await _ingest_event(event)
         except Exception as e:
             logger.error(f"Probe loop error: {e}")
 
